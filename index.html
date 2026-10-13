@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gregmat Vocab Mountain — 1020 Words</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>Vocab Mountain</h1>
+      <p class="subtitle"><span id="count">1020</span> GRE words · meanings · sentences · synonyms</p>
+    </div>
+    <button id="randomBtn" class="btn secondary" title="Jump to a random word">🎲 Random</button>
+  </div>
+
+  <div class="controls">
+    <input id="search" type="search" placeholder="Search word, meaning, synonym, sentence…  (e.g. capricious, happy, daunting)" autocomplete="off" />
+    <select id="groupFilter" title="Filter by group">
+      <option value="all">All groups</option>
+    </select>
+    <select id="sortOrder" title="Sort alphabetically">
+      <option value="az">Sort: A → Z</option>
+      <option value="za">Sort: Z → A</option>
+      <option value="group">Sort: By group</option>
+    </select>
+    <button id="clearBtn" class="btn">Clear</button>
+  </div>
+  <div class="meta-row">
+    <span id="resultInfo"></span>
+    <label class="toggle"><input type="checkbox" id="compactToggle" /> Compact view</label>
+  </div>
+</header>
+
+<main>
+  <div id="list" class="grid"></div>
+  <div id="empty" class="empty" hidden>No words match your search. <button id="resetBtn" class="btn">Reset</button></div>
+</main>
+
+<footer>
+  <span>Data: Gregmat Vocab Mountain (gregmat.json) · Built as a static app — no backend needed.</span>
+  <span>Run with: <code>python3 -m http.server</code> in this folder</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
