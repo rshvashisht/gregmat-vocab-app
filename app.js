@@ -53,6 +53,21 @@ function searchableText(w) {
 // Precompute for speed
 let searchIndex = [];
 
+// Chunked-render state ({i, q} or null when fully rendered)
+const CHUNK = 120;
+let pendingRender = null;
+function drawChunk() {
+  const st = pendingRender;
+  if (!st) return;
+  const frag = document.createDocumentFragment();
+  for (let j = 0; j < CHUNK && st.i < filtered.length; j++, st.i++) {
+    frag.appendChild(cardEl(filtered[st.i], st.q));
+  }
+  $list.appendChild(frag);
+  if (st.i < filtered.length) requestAnimationFrame(drawChunk);
+  else pendingRender = null;
+}
+
 function applyFilters() {
   const q = $search.value.trim().toLowerCase();
   const g = $group.value;
@@ -82,20 +97,22 @@ function render(q) {
   $info.textContent = `Showing ${filtered.length} of ${WORDS.length} words`;
   $empty.hidden = filtered.length !== 0;
   updateCounts();
+  setSelected(-1, false);
 
   // Render in chunks to keep UI snappy for 1020 cards
-  const CHUNK = 120;
   $list.innerHTML = '';
-  let i = 0;
-  function drawChunk() {
-    const frag = document.createDocumentFragment();
-    for (let j = 0; j < CHUNK && i < filtered.length; j++, i++) {
-      frag.appendChild(cardEl(filtered[i], q));
-    }
-    $list.appendChild(frag);
-    if (i < filtered.length) requestAnimationFrame(drawChunk);
-  }
+  pendingRender = { i: 0, q };
   drawChunk();
+}
+
+// Finish rendering all remaining cards immediately (used before keyboard jumps)
+function flushRender() {
+  const st = pendingRender;
+  if (!st) return;
+  const frag = document.createDocumentFragment();
+  while (st.i < filtered.length) frag.appendChild(cardEl(filtered[st.i++], st.q));
+  $list.appendChild(frag);
+  pendingRender = null;
 }
 
 function cardEl(w, q) {
@@ -134,29 +151,83 @@ function cardEl(w, q) {
   return div;
 }
 
+// Set (or toggle off) a flag for a word and sync the card in place
+function setFlagFor(word, color) {
+  if (!color || flags[word] === color) delete flags[word]; // same color again clears
+  else flags[word] = color;
+  saveFlags();
+  updateCounts();
+  const cur = flags[word] || 'none';
+  const card = document.getElementById('w-' + word);
+  if (card) {
+    card.dataset.flag = cur;
+    card.querySelectorAll('.dot').forEach(b => b.classList.toggle('active', flags[word] === b.dataset.flag));
+  }
+  // If the card no longer matches the active flag filter, drop it in place (keeps scroll position)
+  if ($flag.value !== 'all' && cur !== $flag.value) {
+    if (card) card.remove();
+    const idx = filtered.findIndex(x => x.word === word);
+    if (idx >= 0) filtered.splice(idx, 1);
+    const visible = $list.querySelectorAll('.card').length;
+    $info.textContent = `Showing ${visible} of ${WORDS.length} words`;
+    $empty.hidden = visible !== 0;
+    if (selIdx === idx) {
+      selIdx = -1;
+      if (filtered.length) setSelected(Math.min(idx, filtered.length - 1));
+    } else if (selIdx > idx) selIdx--;
+  }
+}
+
+// ---- Keyboard navigation: selected tile ----
+let selIdx = -1;
+function setSelected(i, scroll = true) {
+  $list.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
+  selIdx = i;
+  if (i < 0 || i >= filtered.length) { selIdx = -1; return; }
+  const el = document.getElementById('w-' + filtered[i].word);
+  if (el) {
+    el.classList.add('selected');
+    if (scroll) el.scrollIntoView({ block: 'nearest' });
+  }
+}
+// How many cards fit in one visual row of the grid
+function columnCount() {
+  const kids = $list.children;
+  if (!kids.length) return 1;
+  const top = kids[0].offsetTop;
+  let n = 0;
+  for (const k of kids) {
+    if (k.offsetTop === top) n++;
+    else break;
+  }
+  return Math.max(n, 1);
+}
+function moveSelection(key) {
+  if (!filtered.length) return;
+  flushRender();
+  const cols = columnCount();
+  let i = selIdx;
+  if (i < 0) i = 0;
+  else if (key === 'ArrowRight') i = Math.min(i + 1, filtered.length - 1);
+  else if (key === 'ArrowLeft') i = Math.max(i - 1, 0);
+  else if (key === 'ArrowDown') i = Math.min(i + cols, filtered.length - 1);
+  else if (key === 'ArrowUp') i = Math.max(i - cols, 0);
+  setSelected(i);
+}
 // Events (delegated)
 $list.addEventListener('click', e => {
   const d = e.target.closest('.dot');
   if (d) {
-    const word = d.dataset.word;
-    const color = d.dataset.flag;
-    if (flags[word] === color) delete flags[word]; // click again to clear
-    else flags[word] = color;
-    saveFlags();
-    const cur = flags[word] || 'none';
-    const card = d.closest('.card');
-    card.dataset.flag = cur;
-    card.querySelectorAll('.dot').forEach(b => b.classList.toggle('active', flags[word] === b.dataset.flag));
-    updateCounts();
-    // If the card no longer matches the active flag filter, drop it in place (keeps scroll position)
-    if ($flag.value !== 'all' && cur !== $flag.value) {
-      card.remove();
-      filtered = filtered.filter(x => x.word !== word);
-      const visible = $list.querySelectorAll('.card').length;
-      $info.textContent = `Showing ${visible} of ${WORDS.length} words`;
-      $empty.hidden = visible !== 0;
-    }
+    setFlagFor(d.dataset.word, d.dataset.flag);
+    const idx = filtered.findIndex(x => 'w-' + x.word === d.closest('.card')?.id);
+    if (idx >= 0) setSelected(idx, false);
     return;
+  }
+  // Clicking anywhere on a card selects it for keyboard nav
+  const card = e.target.closest('.card');
+  if (card) {
+    const idx = filtered.findIndex(x => 'w-' + x.word === card.id);
+    if (idx >= 0) setSelected(idx, false);
   }
   const a = e.target.closest('.audio-btn');
   if (a) {
@@ -188,12 +259,42 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 });
 document.getElementById('randomBtn').addEventListener('click', () => {
   if (!filtered.length) return;
-  const w = filtered[Math.floor(Math.random() * filtered.length)];
-  const el = document.getElementById('w-' + w.word);
+  flushRender();
+  const idx = Math.floor(Math.random() * filtered.length);
+  const el = document.getElementById('w-' + filtered[idx].word);
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setSelected(idx, false);
 });
 document.getElementById('compactToggle').addEventListener('change', e => {
   document.body.classList.toggle('compact', e.target.checked);
+});
+
+// Global shortcuts: arrows move between tiles, R/Y/G flag, X clears, ? focuses search.
+// Skipped while typing in a field so normal typing is unaffected.
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+  if (typing) {
+    if (e.key === 'Escape') t.blur();
+    return;
+  }
+  if (e.key === '?') {
+    e.preventDefault();
+    $search.focus();
+    $search.select();
+    return;
+  }
+  if (e.key === 'Escape') { setSelected(-1, false); return; }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    moveSelection(e.key);
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if ((k === 'r' || k === 'y' || k === 'g' || k === 'x') && selIdx >= 0 && selIdx < filtered.length) {
+    const color = k === 'r' ? 'red' : k === 'y' ? 'yellow' : k === 'g' ? 'green' : null;
+    setFlagFor(filtered[selIdx].word, color);
+  }
 });
 
 // Init
