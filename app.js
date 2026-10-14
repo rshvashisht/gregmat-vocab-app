@@ -4,10 +4,31 @@ let filtered = [];
 const $list = document.getElementById('list');
 const $search = document.getElementById('search');
 const $group = document.getElementById('groupFilter');
+const $flag = document.getElementById('flagFilter');
 const $sort = document.getElementById('sortOrder');
 const $info = document.getElementById('resultInfo');
 const $empty = document.getElementById('empty');
 const $count = document.getElementById('count');
+const $flagCounts = document.getElementById('flagCounts');
+
+// Red / yellow / green markings, persisted per device
+const FLAGS_KEY = 'gregmat-flags-v1';
+let flags = {};
+try { flags = JSON.parse(localStorage.getItem(FLAGS_KEY) || '{}') || {}; }
+catch (e) { flags = {}; }
+function saveFlags() {
+  try { localStorage.setItem(FLAGS_KEY, JSON.stringify(flags)); }
+  catch (e) { /* storage unavailable — flags last for this session only */ }
+}
+function updateCounts() {
+  let r = 0, y = 0, g = 0;
+  for (const k in flags) {
+    if (flags[k] === 'red') r++;
+    else if (flags[k] === 'yellow') y++;
+    else if (flags[k] === 'green') g++;
+  }
+  $flagCounts.textContent = `🔴 ${r} · 🟡 ${y} · 🟢 ${g}`;
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({
@@ -35,10 +56,12 @@ let searchIndex = [];
 function applyFilters() {
   const q = $search.value.trim().toLowerCase();
   const g = $group.value;
+  const f = $flag.value;
   const sort = $sort.value;
 
   filtered = WORDS.filter((w, idx) => {
     if (g !== 'all' && w.group !== g) return false;
+    if (f !== 'all' && (flags[w.word] || 'none') !== f) return false;
     if (q && !searchIndex[idx].includes(q)) return false;
     return true;
   });
@@ -46,6 +69,10 @@ function applyFilters() {
   if (sort === 'az') filtered.sort((a, b) => a.word.localeCompare(b.word));
   else if (sort === 'za') filtered.sort((a, b) => b.word.localeCompare(a.word));
   else if (sort === 'group') filtered.sort((a, b) => a.group.localeCompare(b.group, undefined, {numeric: true}) || a.word.localeCompare(b.word));
+  else if (sort === 'flag') {
+    const rank = { red: 0, yellow: 1, green: 2, none: 3 };
+    filtered.sort((a, b) => (rank[flags[a.word] || 'none'] - rank[flags[b.word] || 'none']) || a.word.localeCompare(b.word));
+  }
 
   render(q);
 }
@@ -54,6 +81,7 @@ function render(q) {
   $count.textContent = WORDS.length;
   $info.textContent = `Showing ${filtered.length} of ${WORDS.length} words`;
   $empty.hidden = filtered.length !== 0;
+  updateCounts();
 
   // Render in chunks to keep UI snappy for 1020 cards
   const CHUNK = 120;
@@ -74,6 +102,8 @@ function cardEl(w, q) {
   const div = document.createElement('article');
   div.className = 'card';
   div.id = 'w-' + w.word;
+  const cur = flags[w.word] || 'none';
+  div.dataset.flag = cur;
 
   const sensesHtml = w.senses.map(s => `
     <div class="sense">
@@ -94,6 +124,11 @@ function cardEl(w, q) {
       </div>
       <span class="group-badge">${esc(w.group)}</span>
     </div>
+    <div class="flag-row" role="group" aria-label="Mark this word">
+      ${['red', 'yellow', 'green'].map(c =>
+        `<button class="dot ${c}${cur === c ? ' active' : ''}" data-flag="${c}" data-word="${esc(w.word)}" title="${c === 'red' ? 'Red — don’t know' : c === 'yellow' ? 'Yellow — unsure' : 'Green — known'} (click again to clear)"></button>`
+      ).join('')}
+    </div>
     ${sensesHtml}
   `;
   return div;
@@ -101,6 +136,28 @@ function cardEl(w, q) {
 
 // Events (delegated)
 $list.addEventListener('click', e => {
+  const d = e.target.closest('.dot');
+  if (d) {
+    const word = d.dataset.word;
+    const color = d.dataset.flag;
+    if (flags[word] === color) delete flags[word]; // click again to clear
+    else flags[word] = color;
+    saveFlags();
+    const cur = flags[word] || 'none';
+    const card = d.closest('.card');
+    card.dataset.flag = cur;
+    card.querySelectorAll('.dot').forEach(b => b.classList.toggle('active', flags[word] === b.dataset.flag));
+    updateCounts();
+    // If the card no longer matches the active flag filter, drop it in place (keeps scroll position)
+    if ($flag.value !== 'all' && cur !== $flag.value) {
+      card.remove();
+      filtered = filtered.filter(x => x.word !== word);
+      const visible = $list.querySelectorAll('.card').length;
+      $info.textContent = `Showing ${visible} of ${WORDS.length} words`;
+      $empty.hidden = visible !== 0;
+    }
+    return;
+  }
   const a = e.target.closest('.audio-btn');
   if (a) {
     new Audio(a.dataset.audio).play().catch(() => alert('Audio failed to load.'));
@@ -120,13 +177,14 @@ $search.addEventListener('input', () => {
   debounce = setTimeout(applyFilters, 120);
 });
 $group.addEventListener('change', applyFilters);
+$flag.addEventListener('change', applyFilters);
 $sort.addEventListener('change', applyFilters);
 
 document.getElementById('clearBtn').addEventListener('click', () => {
-  $search.value = ''; $group.value = 'all'; $sort.value = 'az'; applyFilters();
+  $search.value = ''; $group.value = 'all'; $flag.value = 'all'; $sort.value = 'az'; applyFilters();
 });
 document.getElementById('resetBtn').addEventListener('click', () => {
-  $search.value = ''; $group.value = 'all'; applyFilters();
+  $search.value = ''; $group.value = 'all'; $flag.value = 'all'; applyFilters();
 });
 document.getElementById('randomBtn').addEventListener('click', () => {
   if (!filtered.length) return;
